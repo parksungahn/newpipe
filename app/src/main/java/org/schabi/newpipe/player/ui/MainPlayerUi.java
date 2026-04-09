@@ -932,6 +932,7 @@ public final class MainPlayerUi extends VideoPlayerUi implements View.OnLayoutCh
             // Apply window insets because Android will not do it when orientation changes
             // from landscape to portrait (open vertical video to reproduce)
             binding.playbackControlRoot.setPadding(0, 0, 0, 0);
+            binding.surfaceView.resetGestureZoom();
         }
         fragmentListener.onFullscreenStateChanged(isFullscreen);
 

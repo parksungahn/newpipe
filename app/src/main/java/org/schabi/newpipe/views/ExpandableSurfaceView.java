@@ -10,12 +10,18 @@ import static com.google.android.exoplayer2.ui.AspectRatioFrameLayout.RESIZE_MOD
 import static com.google.android.exoplayer2.ui.AspectRatioFrameLayout.RESIZE_MODE_ZOOM;
 
 public class ExpandableSurfaceView extends SurfaceView {
+    private static final float MIN_GESTURE_ZOOM = 1.0f;
+    private static final float MAX_GESTURE_ZOOM = 3.0f;
+
     private int resizeMode = RESIZE_MODE_FIT;
     private int baseHeight = 0;
     private int maxHeight = 0;
     private float videoAspectRatio = 0.0f;
     private float scaleX = 1.0f;
     private float scaleY = 1.0f;
+    private float gestureZoom = 1.0f;
+    private float gesturePanX = 0.0f;
+    private float gesturePanY = 0.0f;
 
     public ExpandableSurfaceView(final Context context, final AttributeSet attrs) {
         super(context, attrs);
@@ -68,8 +74,11 @@ public class ExpandableSurfaceView extends SurfaceView {
     @Override
     protected void onLayout(final boolean changed,
                             final int left, final int top, final int right, final int bottom) {
-        setScaleX(scaleX);
-        setScaleY(scaleY);
+        setScaleX(scaleX * gestureZoom);
+        setScaleY(scaleY * gestureZoom);
+        clampGesturePanToBounds();
+        setTranslationX(gesturePanX);
+        setTranslationY(gesturePanY);
     }
 
     /**
@@ -106,5 +115,66 @@ public class ExpandableSurfaceView extends SurfaceView {
 
         videoAspectRatio = aspectRatio;
         requestLayout();
+    }
+
+    public void setGestureZoom(final float zoom) {
+        final float clampedZoom = Math.max(MIN_GESTURE_ZOOM, Math.min(zoom, MAX_GESTURE_ZOOM));
+        if (gestureZoom == clampedZoom) {
+            return;
+        }
+
+        gestureZoom = clampedZoom;
+        if (gestureZoom <= MIN_GESTURE_ZOOM) {
+            gesturePanX = 0.0f;
+            gesturePanY = 0.0f;
+        } else {
+            clampGesturePanToBounds();
+        }
+        requestLayout();
+    }
+
+    public void resetGestureZoom() {
+        setGestureZoom(MIN_GESTURE_ZOOM);
+    }
+
+    public float getGestureZoom() {
+        return gestureZoom;
+    }
+
+    public void panBy(final float deltaX, final float deltaY) {
+        if (gestureZoom <= MIN_GESTURE_ZOOM) {
+            return;
+        }
+
+        gesturePanX += deltaX;
+        gesturePanY += deltaY;
+        clampGesturePanToBounds();
+        setTranslationX(gesturePanX);
+        setTranslationY(gesturePanY);
+    }
+
+    private void clampGesturePanToBounds() {
+        final float maxTranslationX = getMaxTranslationX();
+        final float maxTranslationY = getMaxTranslationY();
+        gesturePanX = Math.max(-maxTranslationX, Math.min(gesturePanX, maxTranslationX));
+        gesturePanY = Math.max(-maxTranslationY, Math.min(gesturePanY, maxTranslationY));
+    }
+
+    private float getMaxTranslationX() {
+        final int width = getMeasuredWidth();
+        if (width == 0) {
+            return 0.0f;
+        }
+        final float scaledWidth = width * scaleX * gestureZoom;
+        return Math.max(0.0f, (scaledWidth - width) / 2.0f);
+    }
+
+    private float getMaxTranslationY() {
+        final int height = getMeasuredHeight();
+        if (height == 0) {
+            return 0.0f;
+        }
+        final float scaledHeight = height * scaleY * gestureZoom;
+        return Math.max(0.0f, (scaledHeight - height) / 2.0f);
     }
 }

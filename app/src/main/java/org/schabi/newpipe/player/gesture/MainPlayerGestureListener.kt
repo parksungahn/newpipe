@@ -2,6 +2,7 @@ package org.schabi.newpipe.player.gesture
 
 import android.util.Log
 import android.view.MotionEvent
+import android.view.ScaleGestureDetector
 import android.view.View
 import android.view.View.OnTouchListener
 import android.widget.ProgressBar
@@ -32,13 +33,69 @@ class MainPlayerGestureListener(
     private var isMoving = false
     private var isMiddleSwipeCandidate = false
     private var hasTriggeredMiddleSwipe = false
+    private var isScaling = false
+    private var lastMultiTouchFocusX = Float.NaN
+    private var lastMultiTouchFocusY = Float.NaN
+    private val scaleGestureDetector = ScaleGestureDetector(
+        player.context,
+        object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScaleBegin(detector: ScaleGestureDetector): Boolean {
+                if (!playerUi.isFullscreen || player.currentState == Player.STATE_COMPLETED) {
+                    return false
+                }
+                isScaling = true
+                return true
+            }
+
+            override fun onScale(detector: ScaleGestureDetector): Boolean {
+                if (!isScaling) {
+                    return false
+                }
+                binding.surfaceView.setGestureZoom(
+                    binding.surfaceView.gestureZoom * detector.scaleFactor
+                )
+                return true
+            }
+
+            override fun onScaleEnd(detector: ScaleGestureDetector) {
+                isScaling = false
+            }
+        }
+    )
 
     override fun onTouch(v: View, event: MotionEvent): Boolean {
+        val isMultiTouch = event.pointerCount > 1
+        if (isMultiTouch || isScaling || event.actionMasked == MotionEvent.ACTION_POINTER_DOWN) {
+            scaleGestureDetector.onTouchEvent(event)
+            handleMultiTouchPan(event)
+
+            if (isMoving) {
+                isMoving = false
+                onScrollEnd(event)
+            }
+            isMiddleSwipeCandidate = false
+
+            return when (event.actionMasked) {
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    isScaling = false
+                    resetMultiTouchFocus()
+                    v.parent?.requestDisallowInterceptTouchEvent(false)
+                    false
+                }
+
+                else -> {
+                    v.parent?.requestDisallowInterceptTouchEvent(playerUi.isFullscreen)
+                    true
+                }
+            }
+        }
+
         super.onTouch(v, event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 isMiddleSwipeCandidate = getDisplayPortion(event) == DisplayPortion.MIDDLE
                 hasTriggeredMiddleSwipe = false
+                resetMultiTouchFocus()
             }
 
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
@@ -64,6 +121,70 @@ class MainPlayerGestureListener(
 
             else -> true
         }
+    }
+
+    private fun handleMultiTouchPan(event: MotionEvent) {
+        if (!playerUi.isFullscreen) {
+            resetMultiTouchFocus()
+            return
+        }
+
+        when (event.actionMasked) {
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                if (event.pointerCount >= 2) {
+                    lastMultiTouchFocusX = calculateMultiTouchFocusX(event)
+                    lastMultiTouchFocusY = calculateMultiTouchFocusY(event)
+                }
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                if (event.pointerCount < 2) {
+                    return
+                }
+                val focusX = calculateMultiTouchFocusX(event)
+                val focusY = calculateMultiTouchFocusY(event)
+
+                if (
+                    !lastMultiTouchFocusX.isNaN() &&
+                    !lastMultiTouchFocusY.isNaN() &&
+                    binding.surfaceView.gestureZoom > MIN_ZOOM_FOR_PAN
+                ) {
+                    binding.surfaceView.panBy(
+                        focusX - lastMultiTouchFocusX,
+                        focusY - lastMultiTouchFocusY
+                    )
+                }
+                lastMultiTouchFocusX = focusX
+                lastMultiTouchFocusY = focusY
+            }
+
+            MotionEvent.ACTION_POINTER_UP,
+            MotionEvent.ACTION_UP,
+            MotionEvent.ACTION_CANCEL -> {
+                resetMultiTouchFocus()
+            }
+        }
+    }
+
+    private fun resetMultiTouchFocus() {
+        lastMultiTouchFocusX = Float.NaN
+        lastMultiTouchFocusY = Float.NaN
+    }
+
+    private fun calculateMultiTouchFocusX(event: MotionEvent): Float {
+        var sum = 0f
+        for (i in 0 until event.pointerCount) {
+            sum += event.getX(i)
+        }
+        return sum / event.pointerCount
+    }
+
+    private fun calculateMultiTouchFocusY(event: MotionEvent): Float {
+        var sum = 0f
+        for (i in 0 until event.pointerCount) {
+            sum += event.getY(i)
+        }
+        return sum / event.pointerCount
     }
 
     override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
@@ -268,5 +389,6 @@ class MainPlayerGestureListener(
         private val TAG = MainPlayerGestureListener::class.java.simpleName
         private val DEBUG = MainActivity.DEBUG
         private const val MOVEMENT_THRESHOLD = 40
+        private const val MIN_ZOOM_FOR_PAN = 1.01f
     }
 }
