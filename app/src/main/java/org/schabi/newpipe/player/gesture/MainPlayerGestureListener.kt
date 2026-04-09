@@ -30,20 +30,34 @@ class MainPlayerGestureListener(
     private val playerUi: MainPlayerUi
 ) : BasePlayerGestureListener(playerUi), OnTouchListener {
     private var isMoving = false
+    private var isMiddleSwipeCandidate = false
+    private var hasTriggeredMiddleSwipe = false
 
     override fun onTouch(v: View, event: MotionEvent): Boolean {
         super.onTouch(v, event)
-        if (event.action == MotionEvent.ACTION_UP && isMoving) {
-            isMoving = false
-            onScrollEnd(event)
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                isMiddleSwipeCandidate = getDisplayPortion(event) == DisplayPortion.MIDDLE
+                hasTriggeredMiddleSwipe = false
+            }
+
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (isMoving) {
+                    isMoving = false
+                    onScrollEnd(event)
+                }
+                isMiddleSwipeCandidate = false
+            }
         }
-        return when (event.action) {
+        return when (event.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
-                v.parent?.requestDisallowInterceptTouchEvent(playerUi.isFullscreen)
+                v.parent?.requestDisallowInterceptTouchEvent(
+                    playerUi.isFullscreen || isMiddleSwipeCandidate
+                )
                 true
             }
 
-            MotionEvent.ACTION_UP -> {
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 v.parent?.requestDisallowInterceptTouchEvent(false)
                 false
             }
@@ -170,7 +184,7 @@ class MainPlayerGestureListener(
         distanceX: Float,
         distanceY: Float
     ): Boolean {
-        if (initialEvent == null || !playerUi.isFullscreen) {
+        if (initialEvent == null) {
             return false
         }
 
@@ -185,11 +199,29 @@ class MainPlayerGestureListener(
             return false
         }
 
+        val initialDisplayPortion = getDisplayPortion(initialEvent)
         val insideThreshold = abs(movingEvent.y - initialEvent.y) <= MOVEMENT_THRESHOLD
-        if (
-            !isMoving && (insideThreshold || abs(distanceX) > abs(distanceY)) ||
-            player.currentState == Player.STATE_COMPLETED
-        ) {
+        val hasMoreHorizontalDistance = abs(distanceX) > abs(distanceY)
+        if (!isMoving && (insideThreshold || hasMoreHorizontalDistance)) {
+            return false
+        }
+
+        if (initialDisplayPortion == DisplayPortion.MIDDLE) {
+            isMoving = true
+            if (hasTriggeredMiddleSwipe || player.currentState == Player.STATE_COMPLETED) {
+                return true
+            }
+
+            val isSwipingUp = initialEvent.y - movingEvent.y > MOVEMENT_THRESHOLD
+            val isSwipingDown = movingEvent.y - initialEvent.y > MOVEMENT_THRESHOLD
+            if (isSwipingUp && !playerUi.isFullscreen || isSwipingDown && playerUi.isFullscreen) {
+                playerUi.performScreenRotationButtonAction()
+                hasTriggeredMiddleSwipe = true
+            }
+            return true
+        }
+
+        if (!playerUi.isFullscreen || player.currentState == Player.STATE_COMPLETED) {
             return false
         }
 

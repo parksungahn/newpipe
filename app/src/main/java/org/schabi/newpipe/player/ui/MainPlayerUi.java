@@ -155,16 +155,8 @@ public final class MainPlayerUi extends VideoPlayerUi implements View.OnLayoutCh
     protected void initListeners() {
         super.initListeners();
 
-        binding.screenRotationButton.setOnClickListener(makeOnClickListener(() -> {
-            // Only if it's not a vertical video or vertical video but in landscape with locked
-            // orientation a screen orientation can be changed automatically
-            if (!isVerticalVideo || (isLandscape() && globalScreenOrientationLocked(context))) {
-                player.getFragmentListener()
-                        .ifPresent(PlayerServiceEventListener::onScreenRotationButtonClicked);
-            } else {
-                toggleFullscreen();
-            }
-        }));
+        binding.screenRotationButton.setOnClickListener(
+                makeOnClickListener(this::performScreenRotationButtonAction));
         binding.queueButton.setOnClickListener(v -> onQueueClicked());
         binding.segmentsButton.setOnClickListener(v -> onSegmentsClicked());
 
@@ -889,6 +881,17 @@ public final class MainPlayerUi extends VideoPlayerUi implements View.OnLayoutCh
         binding.screenRotationButton.setImageDrawable(AppCompatResources.getDrawable(context,
                 isFullscreen ? R.drawable.ic_fullscreen_exit
                         : R.drawable.ic_fullscreen));
+    }
+
+    public void performScreenRotationButtonAction() {
+        // Only if it's not a vertical video or vertical video but in landscape with locked
+        // orientation a screen orientation can be changed automatically
+        if (!isVerticalVideo || (isLandscape() && globalScreenOrientationLocked(context))) {
+            player.getFragmentListener()
+                    .ifPresent(PlayerServiceEventListener::onScreenRotationButtonClicked);
+        } else {
+            toggleFullscreen();
+        }
     }
 
     @Override
