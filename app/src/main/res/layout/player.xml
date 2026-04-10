@@ -700,6 +700,29 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent">
 
+        <org.schabi.newpipe.views.GestureRegionOverlayView
+            android:id="@+id/gestureRegionOverlay"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:importantForAccessibility="no"
+            android:visibility="gone" />
+
+        <androidx.appcompat.widget.AppCompatTextView
+            android:id="@+id/gestureRegionActionText"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_centerInParent="true"
+            android:background="@drawable/background_oval_black_transparent"
+            android:importantForAccessibility="no"
+            android:paddingStart="14dp"
+            android:paddingTop="8dp"
+            android:paddingEnd="14dp"
+            android:paddingBottom="8dp"
+            android:textColor="@color/white"
+            android:textSize="16sp"
+            android:visibility="gone"
+            tools:text="@string/volume" />
+
         <RelativeLayout
             android:id="@+id/loading_panel"
             android:layout_width="match_parent"

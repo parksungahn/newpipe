@@ -19,6 +19,7 @@ import org.schabi.newpipe.player.helper.AudioReactor
 import org.schabi.newpipe.player.helper.PlayerHelper
 import org.schabi.newpipe.player.ui.MainPlayerUi
 import org.schabi.newpipe.util.ThemeHelper.getAndroidDimenPx
+import org.schabi.newpipe.views.GestureRegionOverlayView
 
 /**
  * GestureListener for the player
@@ -36,6 +37,8 @@ class MainPlayerGestureListener(
     private var isScaling = false
     private var lastMultiTouchFocusX = Float.NaN
     private var lastMultiTouchFocusY = Float.NaN
+    private var touchDownY = Float.NaN
+    private var activeGesturePortion = DisplayPortion.MIDDLE
     private val scaleGestureDetector = ScaleGestureDetector(
         player.context,
         object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
@@ -68,6 +71,7 @@ class MainPlayerGestureListener(
         if (isMultiTouch || isScaling || event.actionMasked == MotionEvent.ACTION_POINTER_DOWN) {
             scaleGestureDetector.onTouchEvent(event)
             handleMultiTouchPan(event)
+            hideGestureRegionOverlay()
 
             if (isMoving) {
                 isMoving = false
@@ -93,8 +97,11 @@ class MainPlayerGestureListener(
         super.onTouch(v, event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                isMiddleSwipeCandidate = getDisplayPortion(event) == DisplayPortion.MIDDLE
+                activeGesturePortion = getDisplayPortion(event)
+                isMiddleSwipeCandidate = activeGesturePortion == DisplayPortion.MIDDLE
                 hasTriggeredMiddleSwipe = false
+                touchDownY = event.y
+                binding.gestureRegionOverlay.resetSwipeMotion()
                 resetMultiTouchFocus()
             }
 
@@ -104,6 +111,12 @@ class MainPlayerGestureListener(
                     onScrollEnd(event)
                 }
                 isMiddleSwipeCandidate = false
+                touchDownY = Float.NaN
+                hideGestureRegionOverlay()
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                maybeShowGestureRegionOverlay(event)
             }
         }
         return when (event.actionMasked) {
@@ -120,6 +133,72 @@ class MainPlayerGestureListener(
             }
 
             else -> true
+        }
+    }
+
+    private fun maybeShowGestureRegionOverlay(event: MotionEvent) {
+        if (!playerUi.isFullscreen || player.currentState == Player.STATE_COMPLETED) {
+            hideGestureRegionOverlay()
+            return
+        }
+
+        if (touchDownY.isNaN() || abs(event.y - touchDownY) < OVERLAY_VISIBILITY_THRESHOLD) {
+            return
+        }
+
+        binding.gestureRegionOverlay.setSelectedSegment(
+            when (activeGesturePortion) {
+                DisplayPortion.LEFT,
+                DisplayPortion.LEFT_HALF -> GestureRegionOverlayView.SEGMENT_LEFT
+
+                DisplayPortion.RIGHT,
+                DisplayPortion.RIGHT_HALF -> GestureRegionOverlayView.SEGMENT_RIGHT
+
+                DisplayPortion.MIDDLE -> GestureRegionOverlayView.SEGMENT_MIDDLE
+            }
+        )
+        binding.gestureRegionOverlay.setSwipeMotionDeltaY(event.y - touchDownY)
+        binding.gestureRegionActionText.text = getGestureActionLabel(activeGesturePortion)
+        if (!binding.gestureRegionOverlay.isVisible) {
+            binding.gestureRegionOverlay.isVisible = true
+        }
+        if (!binding.gestureRegionActionText.isVisible) {
+            binding.gestureRegionActionText.isVisible = true
+        }
+    }
+
+    private fun hideGestureRegionOverlay() {
+        binding.gestureRegionOverlay.resetSwipeMotion()
+        if (binding.gestureRegionOverlay.isVisible) {
+            binding.gestureRegionOverlay.isVisible = false
+        }
+        if (binding.gestureRegionActionText.isVisible) {
+            binding.gestureRegionActionText.isVisible = false
+        }
+    }
+
+    private fun getGestureActionLabel(portion: DisplayPortion): String {
+        val actionKey = when (portion) {
+            DisplayPortion.LEFT,
+            DisplayPortion.LEFT_HALF -> PlayerHelper.getActionForLeftGestureSide(player.context)
+
+            DisplayPortion.RIGHT,
+            DisplayPortion.RIGHT_HALF -> PlayerHelper.getActionForRightGestureSide(player.context)
+
+            DisplayPortion.MIDDLE -> PlayerHelper.getActionForMiddleGesture(player.context)
+        }
+
+        return when (actionKey) {
+            player.context.getString(R.string.brightness_control_key) ->
+                player.context.getString(R.string.brightness)
+
+            player.context.getString(R.string.volume_control_key) ->
+                player.context.getString(R.string.volume)
+
+            player.context.getString(R.string.maximize_control_key) ->
+                player.context.getString(R.string.maximize)
+
+            else -> player.context.getString(R.string.none)
         }
     }
 
@@ -291,6 +370,7 @@ class MainPlayerGestureListener(
 
     override fun onScrollEnd(event: MotionEvent) {
         super.onScrollEnd(event)
+        hideGestureRegionOverlay()
         if (binding.volumeRelativeLayout.isVisible) {
             binding.volumeRelativeLayout.animate(false, 200, AnimationType.SCALE_AND_ALPHA, 200)
         }
@@ -321,25 +401,59 @@ class MainPlayerGestureListener(
         }
 
         val initialDisplayPortion = getDisplayPortion(initialEvent)
-        val insideThreshold = abs(movingEvent.y - initialEvent.y) <= MOVEMENT_THRESHOLD
+        val movedDistanceY = abs(movingEvent.y - initialEvent.y)
         val hasMoreHorizontalDistance = abs(distanceX) > abs(distanceY)
-        if (!isMoving && (insideThreshold || hasMoreHorizontalDistance)) {
-            return false
-        }
 
         if (initialDisplayPortion == DisplayPortion.MIDDLE) {
+            val middleAction = PlayerHelper.getActionForMiddleGesture(player.context)
+            if (middleAction == player.context.getString(R.string.none_control_key)) {
+                return false
+            }
+            if (!isMoving && (
+                    hasMoreHorizontalDistance ||
+                        movedDistanceY <= MIDDLE_MOVEMENT_THRESHOLD_DP
+                        * player.context.resources.displayMetrics.density
+                    )
+            ) {
+                return false
+            }
+
             isMoving = true
             if (hasTriggeredMiddleSwipe || player.currentState == Player.STATE_COMPLETED) {
                 return true
             }
 
-            val isSwipingUp = initialEvent.y - movingEvent.y > MOVEMENT_THRESHOLD
-            val isSwipingDown = movingEvent.y - initialEvent.y > MOVEMENT_THRESHOLD
-            if (isSwipingUp && !playerUi.isFullscreen || isSwipingDown && playerUi.isFullscreen) {
-                playerUi.performScreenRotationButtonAction()
-                hasTriggeredMiddleSwipe = true
+            when (middleAction) {
+                player.context.getString(R.string.brightness_control_key) -> {
+                    if (!playerUi.isFullscreen) {
+                        return false
+                    }
+                    onScrollBrightness(distanceY)
+                }
+
+                player.context.getString(R.string.volume_control_key) -> {
+                    if (!playerUi.isFullscreen) {
+                        return false
+                    }
+                    onScrollVolume(distanceY)
+                }
+
+                player.context.getString(R.string.maximize_control_key) -> {
+                    val isSwipingUp = initialEvent.y - movingEvent.y > MOVEMENT_THRESHOLD
+                    val isSwipingDown = movingEvent.y - initialEvent.y > MOVEMENT_THRESHOLD
+                    if ((isSwipingUp && !playerUi.isFullscreen) ||
+                        (isSwipingDown && playerUi.isFullscreen)
+                    ) {
+                        playerUi.performScreenRotationButtonAction()
+                        hasTriggeredMiddleSwipe = true
+                    }
+                }
             }
             return true
+        }
+
+        if (!isMoving && (movedDistanceY <= MOVEMENT_THRESHOLD || hasMoreHorizontalDistance)) {
+            return false
         }
 
         if (!playerUi.isFullscreen || player.currentState == Player.STATE_COMPLETED) {
@@ -390,5 +504,7 @@ class MainPlayerGestureListener(
         private val DEBUG = MainActivity.DEBUG
         private const val MOVEMENT_THRESHOLD = 40
         private const val MIN_ZOOM_FOR_PAN = 1.01f
+        private const val OVERLAY_VISIBILITY_THRESHOLD = 10f
+        private const val MIDDLE_MOVEMENT_THRESHOLD_DP = 72f
     }
 }
