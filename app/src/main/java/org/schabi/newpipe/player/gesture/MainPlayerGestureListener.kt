@@ -33,7 +33,7 @@ class MainPlayerGestureListener(
 ) : BasePlayerGestureListener(playerUi), OnTouchListener {
     private var isMoving = false
     private var isMiddleSwipeCandidate = false
-    private var hasTriggeredMiddleSwipe = false
+    private var hasTriggeredFullscreenSwipe = false
     private var isScaling = false
     private var lastMultiTouchFocusX = Float.NaN
     private var lastMultiTouchFocusY = Float.NaN
@@ -99,7 +99,7 @@ class MainPlayerGestureListener(
             MotionEvent.ACTION_DOWN -> {
                 activeGesturePortion = getDisplayPortion(event)
                 isMiddleSwipeCandidate = activeGesturePortion == DisplayPortion.MIDDLE
-                hasTriggeredMiddleSwipe = false
+                hasTriggeredFullscreenSwipe = false
                 touchDownY = event.y
                 binding.gestureRegionOverlay.resetSwipeMotion()
                 resetMultiTouchFocus()
@@ -405,10 +405,6 @@ class MainPlayerGestureListener(
         val hasMoreHorizontalDistance = abs(distanceX) > abs(distanceY)
 
         if (initialDisplayPortion == DisplayPortion.MIDDLE) {
-            val middleAction = PlayerHelper.getActionForMiddleGesture(player.context)
-            if (middleAction == player.context.getString(R.string.none_control_key)) {
-                return false
-            }
             if (!isMoving && (
                     hasMoreHorizontalDistance ||
                         movedDistanceY <= MIDDLE_MOVEMENT_THRESHOLD_DP
@@ -419,34 +415,37 @@ class MainPlayerGestureListener(
             }
 
             isMoving = true
-            if (hasTriggeredMiddleSwipe || player.currentState == Player.STATE_COMPLETED) {
+            if (hasTriggeredFullscreenSwipe || player.currentState == Player.STATE_COMPLETED) {
                 return true
+            }
+
+            // Keep legacy behavior: from non-fullscreen mini player, center swipe-up always opens
+            // fullscreen even if left/right gesture action was changed.
+            if (!playerUi.isFullscreen) {
+                val isSwipingUp = initialEvent.y - movingEvent.y > MOVEMENT_THRESHOLD
+                if (isSwipingUp) {
+                    playerUi.performScreenRotationButtonAction()
+                    hasTriggeredFullscreenSwipe = true
+                }
+                return true
+            }
+
+            val middleAction = PlayerHelper.getActionForMiddleGesture(player.context)
+            if (middleAction == player.context.getString(R.string.none_control_key)) {
+                return false
             }
 
             when (middleAction) {
                 player.context.getString(R.string.brightness_control_key) -> {
-                    if (!playerUi.isFullscreen) {
-                        return false
-                    }
                     onScrollBrightness(distanceY)
                 }
 
                 player.context.getString(R.string.volume_control_key) -> {
-                    if (!playerUi.isFullscreen) {
-                        return false
-                    }
                     onScrollVolume(distanceY)
                 }
 
                 player.context.getString(R.string.maximize_control_key) -> {
-                    val isSwipingUp = initialEvent.y - movingEvent.y > MOVEMENT_THRESHOLD
-                    val isSwipingDown = movingEvent.y - initialEvent.y > MOVEMENT_THRESHOLD
-                    if ((isSwipingUp && !playerUi.isFullscreen) ||
-                        (isSwipingDown && playerUi.isFullscreen)
-                    ) {
-                        playerUi.performScreenRotationButtonAction()
-                        hasTriggeredMiddleSwipe = true
-                    }
+                    toggleFullscreenBySwipeIfNeeded(initialEvent, movingEvent)
                 }
             }
             return true
@@ -461,6 +460,18 @@ class MainPlayerGestureListener(
         }
 
         isMoving = true
+        val sideAction = if (getDisplayHalfPortion(initialEvent) == DisplayPortion.RIGHT_HALF) {
+            PlayerHelper.getActionForRightGestureSide(player.context)
+        } else {
+            PlayerHelper.getActionForLeftGestureSide(player.context)
+        }
+
+        if (sideAction == player.context.getString(R.string.maximize_control_key)) {
+            if (!hasTriggeredFullscreenSwipe) {
+                toggleFullscreenBySwipeIfNeeded(initialEvent, movingEvent)
+            }
+            return true
+        }
 
         // -- Brightness and Volume control --
         if (getDisplayHalfPortion(initialEvent) == DisplayPortion.RIGHT_HALF) {
@@ -482,6 +493,15 @@ class MainPlayerGestureListener(
         }
 
         return true
+    }
+
+    private fun toggleFullscreenBySwipeIfNeeded(initialEvent: MotionEvent, movingEvent: MotionEvent) {
+        val isSwipingUp = initialEvent.y - movingEvent.y > MOVEMENT_THRESHOLD
+        val isSwipingDown = movingEvent.y - initialEvent.y > MOVEMENT_THRESHOLD
+        if ((isSwipingUp && !playerUi.isFullscreen) || (isSwipingDown && playerUi.isFullscreen)) {
+            playerUi.performScreenRotationButtonAction()
+            hasTriggeredFullscreenSwipe = true
+        }
     }
 
     override fun getDisplayPortion(e: MotionEvent): DisplayPortion {

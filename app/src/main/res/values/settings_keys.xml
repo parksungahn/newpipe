@@ -211,11 +211,13 @@
     <string-array name="left_gesture_control_description">
         <item>@string/brightness</item>
         <item>@string/volume</item>
+        <item>@string/maximize</item>
         <item>@string/none</item>
     </string-array>
     <string-array name="left_gesture_control_values">
         <item>@string/brightness_control_key</item>
         <item>@string/volume_control_key</item>
+        <item>@string/maximize_control_key</item>
         <item>@string/none_control_key</item>
     </string-array>
 
@@ -224,11 +226,13 @@
     <string-array name="right_gesture_control_description">
         <item>@string/volume</item>
         <item>@string/brightness</item>
+        <item>@string/maximize</item>
         <item>@string/none</item>
     </string-array>
     <string-array name="right_gesture_control_values">
         <item>@string/volume_control_key</item>
         <item>@string/brightness_control_key</item>
+        <item>@string/maximize_control_key</item>
         <item>@string/none_control_key</item>
     </string-array>
 
