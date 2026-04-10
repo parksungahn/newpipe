@@ -31,6 +31,7 @@ public class GestureRegionOverlayView extends View {
 
     @Segment
     private int selectedSegment = SEGMENT_NONE;
+    private float swipeMotionDeltaX = 0.0f;
     private float swipeMotionDeltaY = 0.0f;
 
     public GestureRegionOverlayView(final Context context, final AttributeSet attrs) {
@@ -76,7 +77,8 @@ public class GestureRegionOverlayView extends View {
         canvas.drawLine(oneThird, 0f, oneThird, height, linePaint);
         canvas.drawLine(twoThird, 0f, twoThird, height, linePaint);
 
-        if (selectedSegment != SEGMENT_NONE && Math.abs(swipeMotionDeltaY) > 0f) {
+        if (selectedSegment != SEGMENT_NONE
+                && (Math.abs(swipeMotionDeltaY) > 0f || Math.abs(swipeMotionDeltaX) > 0f)) {
             final float density = getResources().getDisplayMetrics().density;
             final float segmentCenterX;
             if (selectedSegment == SEGMENT_LEFT) {
@@ -88,15 +90,19 @@ public class GestureRegionOverlayView extends View {
             }
 
             final float anchorY = height / 2f;
+            final float anchorX = segmentCenterX;
+            final float maxTravelX = Math.min(oneThird * 0.32f, density * 72f);
             final float maxTravel = Math.min(height * 0.18f, density * 72f);
+            final float deltaX = Math.max(-maxTravelX, Math.min(swipeMotionDeltaX, maxTravelX));
             final float delta = Math.max(-maxTravel, Math.min(swipeMotionDeltaY, maxTravel));
+            final float targetX = anchorX + deltaX;
             final float targetY = anchorY + delta;
             final float baseRadius = Math.max(3f, density * 3f);
             final float targetRadius = Math.max(5f, density * 5f);
 
-            canvas.drawLine(segmentCenterX, anchorY, segmentCenterX, targetY, motionLinePaint);
-            canvas.drawCircle(segmentCenterX, anchorY, baseRadius, motionDotPaint);
-            canvas.drawCircle(segmentCenterX, targetY, targetRadius, motionDotPaint);
+            canvas.drawLine(anchorX, anchorY, targetX, targetY, motionLinePaint);
+            canvas.drawCircle(anchorX, anchorY, baseRadius, motionDotPaint);
+            canvas.drawCircle(targetX, targetY, targetRadius, motionDotPaint);
         }
     }
 
@@ -116,10 +122,28 @@ public class GestureRegionOverlayView extends View {
         invalidate();
     }
 
-    public void resetSwipeMotion() {
-        if (swipeMotionDeltaY == 0.0f) {
+    public void setSwipeMotionDeltaX(final float deltaX) {
+        if (swipeMotionDeltaX == deltaX) {
             return;
         }
+        swipeMotionDeltaX = deltaX;
+        invalidate();
+    }
+
+    public void setSwipeMotion(final float deltaX, final float deltaY) {
+        if (swipeMotionDeltaX == deltaX && swipeMotionDeltaY == deltaY) {
+            return;
+        }
+        swipeMotionDeltaX = deltaX;
+        swipeMotionDeltaY = deltaY;
+        invalidate();
+    }
+
+    public void resetSwipeMotion() {
+        if (swipeMotionDeltaX == 0.0f && swipeMotionDeltaY == 0.0f) {
+            return;
+        }
+        swipeMotionDeltaX = 0.0f;
         swipeMotionDeltaY = 0.0f;
         invalidate();
     }

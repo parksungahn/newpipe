@@ -1934,7 +1934,7 @@ public final class VideoDetailFragment
 
         final int newOrientation = isLandscape
                 ? ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-                : ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE;
+                : ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE;
 
         activity.setRequestedOrientation(newOrientation);
     }

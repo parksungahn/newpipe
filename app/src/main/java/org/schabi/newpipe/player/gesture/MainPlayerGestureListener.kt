@@ -10,6 +10,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.content.res.AppCompatResources
 import androidx.core.view.isVisible
 import kotlin.math.abs
+import kotlin.math.max
 import org.schabi.newpipe.MainActivity
 import org.schabi.newpipe.R
 import org.schabi.newpipe.ktx.AnimationType
@@ -34,6 +35,9 @@ class MainPlayerGestureListener(
     private var isMoving = false
     private var isMiddleSwipeCandidate = false
     private var hasTriggeredFullscreenSwipe = false
+    private var isHorizontalSeeking = false
+    private var horizontalSeekStartPositionMs = 0L
+    private var horizontalSeekPreviewPositionMs = 0L
     private var isScaling = false
     private var lastMultiTouchFocusX = Float.NaN
     private var lastMultiTouchFocusY = Float.NaN
@@ -100,8 +104,11 @@ class MainPlayerGestureListener(
                 activeGesturePortion = getDisplayPortion(event)
                 isMiddleSwipeCandidate = activeGesturePortion == DisplayPortion.MIDDLE
                 hasTriggeredFullscreenSwipe = false
+                isHorizontalSeeking = false
+                horizontalSeekStartPositionMs = 0L
+                horizontalSeekPreviewPositionMs = 0L
                 touchDownY = event.y
-                binding.gestureRegionOverlay.resetSwipeMotion()
+                hideGestureRegionOverlay()
                 resetMultiTouchFocus()
             }
 
@@ -115,9 +122,7 @@ class MainPlayerGestureListener(
                 hideGestureRegionOverlay()
             }
 
-            MotionEvent.ACTION_MOVE -> {
-                maybeShowGestureRegionOverlay(event)
-            }
+            MotionEvent.ACTION_MOVE -> Unit
         }
         return when (event.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
@@ -136,18 +141,19 @@ class MainPlayerGestureListener(
         }
     }
 
-    private fun maybeShowGestureRegionOverlay(event: MotionEvent) {
+    private fun showGestureRegionOverlay(
+        portion: DisplayPortion,
+        deltaX: Float,
+        deltaY: Float,
+        label: String = getGestureActionLabel(portion)
+    ) {
         if (!playerUi.isFullscreen || player.currentState == Player.STATE_COMPLETED) {
             hideGestureRegionOverlay()
             return
         }
 
-        if (touchDownY.isNaN() || abs(event.y - touchDownY) < OVERLAY_VISIBILITY_THRESHOLD) {
-            return
-        }
-
         binding.gestureRegionOverlay.setSelectedSegment(
-            when (activeGesturePortion) {
+            when (portion) {
                 DisplayPortion.LEFT,
                 DisplayPortion.LEFT_HALF -> GestureRegionOverlayView.SEGMENT_LEFT
 
@@ -157,11 +163,22 @@ class MainPlayerGestureListener(
                 DisplayPortion.MIDDLE -> GestureRegionOverlayView.SEGMENT_MIDDLE
             }
         )
-        binding.gestureRegionOverlay.setSwipeMotionDeltaY(event.y - touchDownY)
-        binding.gestureRegionActionText.text = getGestureActionLabel(activeGesturePortion)
+        binding.gestureRegionOverlay.setSwipeMotion(deltaX, deltaY)
+        binding.gestureRegionActionText.text = label
         if (!binding.gestureRegionOverlay.isVisible) {
             binding.gestureRegionOverlay.isVisible = true
         }
+        if (!binding.gestureRegionActionText.isVisible) {
+            binding.gestureRegionActionText.isVisible = true
+        }
+    }
+
+    private fun showCenterGestureText(text: String) {
+        binding.gestureRegionOverlay.resetSwipeMotion()
+        if (binding.gestureRegionOverlay.isVisible) {
+            binding.gestureRegionOverlay.isVisible = false
+        }
+        binding.gestureRegionActionText.text = text
         if (!binding.gestureRegionActionText.isVisible) {
             binding.gestureRegionActionText.isVisible = true
         }
@@ -370,6 +387,17 @@ class MainPlayerGestureListener(
 
     override fun onScrollEnd(event: MotionEvent) {
         super.onScrollEnd(event)
+        if (isHorizontalSeeking) {
+            player.seekTo(horizontalSeekPreviewPositionMs)
+            if (player.currentState == Player.STATE_PAUSED_SEEK) {
+                player.changeState(Player.STATE_BUFFERING)
+            }
+            if (!player.isProgressLoopRunning) {
+                player.startProgressLoop()
+            }
+            isHorizontalSeeking = false
+            playerUi.showControlsThenHide()
+        }
         hideGestureRegionOverlay()
         if (binding.volumeRelativeLayout.isVisible) {
             binding.volumeRelativeLayout.animate(false, 200, AnimationType.SCALE_AND_ALPHA, 200)
@@ -401,14 +429,44 @@ class MainPlayerGestureListener(
         }
 
         val initialDisplayPortion = getDisplayPortion(initialEvent)
+        val movedDistanceX = abs(movingEvent.x - initialEvent.x)
         val movedDistanceY = abs(movingEvent.y - initialEvent.y)
-        val hasMoreHorizontalDistance = abs(distanceX) > abs(distanceY)
+        val hasMoreHorizontalDistance = movedDistanceX > movedDistanceY
+        val density = player.context.resources.displayMetrics.density
+        val horizontalActivationThreshold = max(
+            binding.root.width * GESTURE_ACTIVATION_RATIO,
+            HORIZONTAL_MOVEMENT_THRESHOLD_DP * density
+        )
+        val verticalActivationThreshold = max(
+            binding.root.height * GESTURE_ACTIVATION_RATIO,
+            MOVEMENT_THRESHOLD.toFloat()
+        )
+        val middleVerticalActivationThreshold = max(
+            verticalActivationThreshold,
+            MIDDLE_MOVEMENT_THRESHOLD_DP * density
+        )
+
+        if (isHorizontalSeeking) {
+            return handleHorizontalSeek(initialEvent, movingEvent)
+        }
+
+        if (!isMoving &&
+            hasMoreHorizontalDistance &&
+            movedDistanceX > horizontalActivationThreshold &&
+            player.currentState != Player.STATE_COMPLETED &&
+            handleHorizontalSeek(
+                initialEvent,
+                movingEvent
+            )
+        ) {
+            isMoving = true
+            return true
+        }
 
         if (initialDisplayPortion == DisplayPortion.MIDDLE) {
             if (!isMoving && (
                     hasMoreHorizontalDistance ||
-                        movedDistanceY <= MIDDLE_MOVEMENT_THRESHOLD_DP
-                        * player.context.resources.displayMetrics.density
+                        movedDistanceY <= middleVerticalActivationThreshold
                     )
             ) {
                 return false
@@ -422,7 +480,7 @@ class MainPlayerGestureListener(
             // Keep legacy behavior: from non-fullscreen mini player, center swipe-up always opens
             // fullscreen even if left/right gesture action was changed.
             if (!playerUi.isFullscreen) {
-                val isSwipingUp = initialEvent.y - movingEvent.y > MOVEMENT_THRESHOLD
+                val isSwipingUp = initialEvent.y - movingEvent.y > middleVerticalActivationThreshold
                 if (isSwipingUp) {
                     playerUi.performScreenRotationButtonAction()
                     hasTriggeredFullscreenSwipe = true
@@ -438,20 +496,39 @@ class MainPlayerGestureListener(
             when (middleAction) {
                 player.context.getString(R.string.brightness_control_key) -> {
                     onScrollBrightness(distanceY)
+                    showGestureRegionOverlay(
+                        initialDisplayPortion,
+                        0f,
+                        movingEvent.y - initialEvent.y
+                    )
                 }
 
                 player.context.getString(R.string.volume_control_key) -> {
                     onScrollVolume(distanceY)
+                    showGestureRegionOverlay(
+                        initialDisplayPortion,
+                        0f,
+                        movingEvent.y - initialEvent.y
+                    )
                 }
 
                 player.context.getString(R.string.maximize_control_key) -> {
-                    toggleFullscreenBySwipeIfNeeded(initialEvent, movingEvent)
+                    toggleFullscreenBySwipeIfNeeded(
+                        initialEvent,
+                        movingEvent,
+                        middleVerticalActivationThreshold
+                    )
+                    showGestureRegionOverlay(
+                        initialDisplayPortion,
+                        0f,
+                        movingEvent.y - initialEvent.y
+                    )
                 }
             }
             return true
         }
 
-        if (!isMoving && (movedDistanceY <= MOVEMENT_THRESHOLD || hasMoreHorizontalDistance)) {
+        if (!isMoving && (movedDistanceY <= verticalActivationThreshold || hasMoreHorizontalDistance)) {
             return false
         }
 
@@ -468,36 +545,116 @@ class MainPlayerGestureListener(
 
         if (sideAction == player.context.getString(R.string.maximize_control_key)) {
             if (!hasTriggeredFullscreenSwipe) {
-                toggleFullscreenBySwipeIfNeeded(initialEvent, movingEvent)
+                toggleFullscreenBySwipeIfNeeded(
+                    initialEvent,
+                    movingEvent,
+                    verticalActivationThreshold
+                )
             }
+            showGestureRegionOverlay(
+                initialDisplayPortion,
+                0f,
+                movingEvent.y - initialEvent.y
+            )
             return true
         }
 
         // -- Brightness and Volume control --
         if (getDisplayHalfPortion(initialEvent) == DisplayPortion.RIGHT_HALF) {
             when (PlayerHelper.getActionForRightGestureSide(player.context)) {
-                player.context.getString(R.string.volume_control_key) ->
+                player.context.getString(R.string.volume_control_key) -> {
                     onScrollVolume(distanceY)
+                    showGestureRegionOverlay(
+                        initialDisplayPortion,
+                        0f,
+                        movingEvent.y - initialEvent.y
+                    )
+                }
 
-                player.context.getString(R.string.brightness_control_key) ->
+                player.context.getString(R.string.brightness_control_key) -> {
                     onScrollBrightness(distanceY)
+                    showGestureRegionOverlay(
+                        initialDisplayPortion,
+                        0f,
+                        movingEvent.y - initialEvent.y
+                    )
+                }
             }
         } else {
             when (PlayerHelper.getActionForLeftGestureSide(player.context)) {
-                player.context.getString(R.string.volume_control_key) ->
+                player.context.getString(R.string.volume_control_key) -> {
                     onScrollVolume(distanceY)
+                    showGestureRegionOverlay(
+                        initialDisplayPortion,
+                        0f,
+                        movingEvent.y - initialEvent.y
+                    )
+                }
 
-                player.context.getString(R.string.brightness_control_key) ->
+                player.context.getString(R.string.brightness_control_key) -> {
                     onScrollBrightness(distanceY)
+                    showGestureRegionOverlay(
+                        initialDisplayPortion,
+                        0f,
+                        movingEvent.y - initialEvent.y
+                    )
+                }
             }
         }
 
         return true
     }
 
-    private fun toggleFullscreenBySwipeIfNeeded(initialEvent: MotionEvent, movingEvent: MotionEvent) {
-        val isSwipingUp = initialEvent.y - movingEvent.y > MOVEMENT_THRESHOLD
-        val isSwipingDown = movingEvent.y - initialEvent.y > MOVEMENT_THRESHOLD
+    private fun handleHorizontalSeek(
+        initialEvent: MotionEvent,
+        movingEvent: MotionEvent
+    ): Boolean {
+        val exoPlayer = player.exoPlayer ?: return false
+        val duration = exoPlayer.duration
+        if (duration <= 0L) {
+            return false
+        }
+
+        if (!isHorizontalSeeking) {
+            isHorizontalSeeking = true
+            horizontalSeekStartPositionMs = exoPlayer.currentPosition.coerceAtLeast(0L)
+            horizontalSeekPreviewPositionMs = horizontalSeekStartPositionMs
+            if (player.currentState != Player.STATE_PAUSED_SEEK) {
+                player.changeState(Player.STATE_PAUSED_SEEK)
+            }
+        }
+
+        val density = player.context.resources.displayMetrics.density
+        val seekStepMillis = PlayerHelper.retrieveSeekDurationFromPreferences(player).toLong()
+        val effectiveDeltaX = movingEvent.x - initialEvent.x
+        val stepPx = HORIZONTAL_SEEK_STEP_DP * density
+        if (stepPx <= 0f) {
+            return false
+        }
+
+        val seekOffset = (effectiveDeltaX / stepPx * seekStepMillis).toLong()
+        val targetPosition = (horizontalSeekStartPositionMs + seekOffset).coerceIn(0L, duration)
+        if (targetPosition != horizontalSeekPreviewPositionMs) {
+            horizontalSeekPreviewPositionMs = targetPosition
+        }
+
+        if (!playerUi.isControlsVisible) {
+            playerUi.showControls(0)
+        }
+        binding.playbackSeekBar.progress = targetPosition.toInt()
+        binding.playbackCurrentTime.text = PlayerHelper.getTimeString(targetPosition)
+        showCenterGestureText(PlayerHelper.getTimeString(targetPosition))
+
+        return true
+    }
+
+    private fun toggleFullscreenBySwipeIfNeeded(
+        initialEvent: MotionEvent,
+        movingEvent: MotionEvent,
+        thresholdPx: Float
+    ) {
+        val isSwipingUp = initialEvent.y - movingEvent.y > thresholdPx
+        val isSwipingDown = movingEvent.y - initialEvent.y > thresholdPx
         if ((isSwipingUp && !playerUi.isFullscreen) || (isSwipingDown && playerUi.isFullscreen)) {
             playerUi.performScreenRotationButtonAction()
             hasTriggeredFullscreenSwipe = true
@@ -526,5 +683,8 @@ class MainPlayerGestureListener(
         private const val MIN_ZOOM_FOR_PAN = 1.01f
         private const val OVERLAY_VISIBILITY_THRESHOLD = 10f
         private const val MIDDLE_MOVEMENT_THRESHOLD_DP = 72f
+        private const val HORIZONTAL_MOVEMENT_THRESHOLD_DP = 20f
+        private const val HORIZONTAL_SEEK_STEP_DP = 56f
+        private const val GESTURE_ACTIVATION_RATIO = 0.20f
     }
 }
