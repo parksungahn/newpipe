@@ -682,9 +682,9 @@ class MainPlayerGestureListener(
         private const val MOVEMENT_THRESHOLD = 40
         private const val MIN_ZOOM_FOR_PAN = 1.01f
         private const val OVERLAY_VISIBILITY_THRESHOLD = 10f
-        private const val MIDDLE_MOVEMENT_THRESHOLD_DP = 72f
+        private const val MIDDLE_MOVEMENT_THRESHOLD_DP = 36f
         private const val HORIZONTAL_MOVEMENT_THRESHOLD_DP = 20f
         private const val HORIZONTAL_SEEK_STEP_DP = 56f
-        private const val GESTURE_ACTIVATION_RATIO = 0.20f
+        private const val GESTURE_ACTIVATION_RATIO = 0.10f
     }
 }
